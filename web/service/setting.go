@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"strconv"
 	"strings"
@@ -78,6 +79,8 @@ var defaultValueMap = map[string]string{
 	"warp":                        "",
 	"externalTrafficInformEnable": "false",
 	"externalTrafficInformURI":    "",
+	"xrayOutboundTestUrl":         "https://www.google.com/generate_204",
+
 	// LDAP defaults
 	"ldapEnable":            "false",
 	"ldapHost":              "",
@@ -105,7 +108,7 @@ var defaultValueMap = map[string]string{
 // It handles configuration storage, retrieval, and validation for all system settings.
 type SettingService struct{}
 
-func (s *SettingService) GetDefaultJsonConfig() (any, error) {
+func (s *SettingService) GetDefaultJSONConfig() (any, error) {
 	var jsonData any
 	err := json.Unmarshal([]byte(xrayTemplateConfig), &jsonData)
 	if err != nil {
@@ -122,7 +125,7 @@ func (s *SettingService) GetAllSetting() (*entity.AllSetting, error) {
 		return nil, err
 	}
 	allSetting := &entity.AllSetting{}
-	t := reflect.TypeOf(allSetting).Elem()
+	t := reflect.TypeFor[entity.AllSetting]()
 	v := reflect.ValueOf(allSetting).Elem()
 	fields := reflect_util.GetFields(t)
 
@@ -269,6 +272,14 @@ func (s *SettingService) setInt(key string, value int) error {
 
 func (s *SettingService) GetXrayConfigTemplate() (string, error) {
 	return s.getString("xrayTemplateConfig")
+}
+
+func (s *SettingService) GetXrayOutboundTestUrl() (string, error) {
+	return s.getString("xrayOutboundTestUrl")
+}
+
+func (s *SettingService) SetXrayOutboundTestUrl(url string) error {
+	return s.setString("xrayOutboundTestUrl", url)
 }
 
 func (s *SettingService) GetListen() (string, error) {
@@ -596,7 +607,7 @@ func (s *SettingService) GetIpLimitEnable() (bool, error) {
 	return (accessLogPath != "none" && accessLogPath != ""), nil
 }
 
-// LDAP exported getters
+// GetLdapEnable returns whether LDAP is enabled.
 func (s *SettingService) GetLdapEnable() (bool, error) {
 	return s.getBool("ldapEnable")
 }
@@ -683,7 +694,7 @@ func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
 	}
 
 	v := reflect.ValueOf(allSetting).Elem()
-	t := reflect.TypeOf(allSetting).Elem()
+	t := reflect.TypeFor[entity.AllSetting]()
 	fields := reflect_util.GetFields(t)
 	errs := make([]error, 0)
 	for _, field := range fields {
@@ -705,6 +716,28 @@ func (s *SettingService) GetDefaultXrayConfig() (any, error) {
 		return nil, err
 	}
 	return jsonData, nil
+}
+
+func extractHostname(host string) string {
+	h, _, err := net.SplitHostPort(host)
+	// Err is not nil means host does not contain port
+	if err != nil {
+		h = host
+	}
+
+	ip := net.ParseIP(h)
+	// If it's not an IP, return as is
+	if ip == nil {
+		return h
+	}
+
+	// If it's an IPv4, return as is
+	if ip.To4() != nil {
+		return h
+	}
+
+	// IPv6 needs bracketing
+	return "[" + h + "]"
 }
 
 func (s *SettingService) GetDefaultSettings(host string) (any, error) {
@@ -757,7 +790,7 @@ func (s *SettingService) GetDefaultSettings(host string) (any, error) {
 			subTLS = true
 		}
 		if subDomain == "" {
-			subDomain = strings.Split(host, ":")[0]
+			subDomain = extractHostname(host)
 		}
 		if subTLS {
 			subURI = "https://"
